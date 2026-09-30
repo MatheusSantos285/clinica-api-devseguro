@@ -1,0 +1,39 @@
+# Test your FastAPI endpoints
+
+### GET status da API (Raiz)
+GET http://127.0.0.1:8000/
+Accept: application/json
+
+### GET listando todas as consultas
+GET http://127.0.0.1:8000/consultas/
+Accept: application/json
+
+### GET consulta por ID (Sucesso)
+GET http://127.0.0.1:8000/consultas/1
+Accept: application/json
+
+### GET consulta por ID inexistente (404 Not Found)
+GET http://127.0.0.1:8000/consultas/999
+Accept: application/json
+
+### POST criando nova consulta (Sucesso - 201 Created)
+POST http://127.0.0.1:8000/consultas/
+Content-Type: application/json
+
+{
+  "paciente_nome": "Felipe Alves",
+  "medico_nome": "Dr. Fernando",
+  "data_hora": "2026-11-20T11:00:00",
+  "especialidade": "Ortopedia",
+  "status": "agendada"
+}
+
+### POST com payload inválido (422 Unprocessable Entity - falta especialidade e status)
+POST http://127.0.0.1:8000/consultas/
+Content-Type: application/json
+
+{
+  "paciente_nome": "F",
+  "medico_nome": "Dr. Fernando",
+  "data_hora": "2026-11-20T11:00:00"
+}
