@@ -1,16 +1,33 @@
-from fastapi import APIRouter, HTTPException, status, Path
+from fastapi import APIRouter, HTTPException, status, Path, Request
+from fastapi.responses import HTMLResponse
 from typing import List
+from fastapi.templating import Jinja2Templates
 from models.consultas import ConsultaCreate, ConsultaResponse
 from database.consultas import consultas_db
 
 # Concentra os controladores e a definição dos endpoints RESTful
 router = APIRouter(prefix="/consultas", tags=["Consultas"])
 
+# Configuração do Jinja2 apontando para o diretório de templates
+templates = Jinja2Templates(directory="templates")
 
 @router.get("/", response_model=List[ConsultaResponse])
 async def listar_consultas():
     """Retorna a lista de todas as consultas agendadas."""
     return list(consultas_db.values())
+
+@router.get("/agenda-html", response_class=HTMLResponse)
+async def renderizar_agenda(request: Request):
+    """
+    Rota HTML: Renderiza a lista de consultas para a recepção,
+    utilizando Jinja2 e garantindo o mascaramento do campo interno.
+    """
+    consultas_lista = list(consultas_db.values())
+    return templates.TemplateResponse(
+        request=request,
+        name="agenda.html",
+        context={"consultas": consultas_lista}
+    )
 
 
 @router.get("/{id}", response_model=ConsultaResponse)

@@ -37,3 +37,11 @@ Content-Type: application/json
   "medico_nome": "Dr. Fernando",
   "data_hora": "2026-11-20T11:00:00"
 }
+
+### GET página HTML da agenda (Testando renderização Jinja2)
+GET http://127.0.0.1:8000/consultas/agenda-html
+Accept: text/html
+
+### GET validar Egress Filtering em uma consulta JSON (Ausência de anotações internas)
+GET http://127.0.0.1:8000/consultas/1
+Accept: application/json

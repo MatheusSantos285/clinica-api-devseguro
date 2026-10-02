@@ -21,5 +21,14 @@ consultas_db: dict[int, dict] = {
         "especialidade": "Dermatologia",
         "status": "concluida",
         "anotacoes_internas": "Primeira consulta clínica."
+    },
+    999: {
+        "id": 999,
+        "paciente_nome": "<script>alert('Fui hackeado')</script>",
+        "medico_nome": "Dra. Teste",
+        "data_hora": "2026-10-15T10:00:00",
+        "especialidade": "Teste",
+        "status": "agendada",
+        "anotacoes_internas": "DADO_SENSIVEL_NUNCA_VAZAR"
     }
 }
