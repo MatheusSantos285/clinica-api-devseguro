@@ -1,6 +1,6 @@
 # Test your FastAPI endpoints
 
-### GET status da API (Raiz)
+### GET status da API (Raiz) - ÚNICA ROTA PÚBLICA
 GET http://127.0.0.1:8000/
 Accept: application/json
 
@@ -16,27 +16,34 @@ Accept: application/json
 GET http://127.0.0.1:8000/consultas/999
 Accept: application/json
 
-### POST criando nova consulta (Sucesso - 201 Created)
-POST http://127.0.0.1:8000/consultas/legado
-Content-Type: application/json
+### ==========================================================
+### ROTA LEGADA DESATIVADA (MITIGAÇÃO DE ZOMBIE API - EXERCÍCIO 9)
+### Os testes abaixo foram comentados pois o endpoint /legado foi
+### aposentado para evitar bypass de segurança (BOPLA/BOLA).
+### Se executados, devem retornar 404 Not Found.
+### ==========================================================
 
-{
-  "paciente_nome": "Felipe Alves",
-  "medico_nome": "Dr. Fernando",
-  "data_hora": "2026-11-20T11:00:00",
-  "especialidade": "Ortopedia",
-  "status": "agendada"
-}
+# ### POST criando nova consulta (Sucesso - 201 Created) - DESATIVADO
+# POST http://127.0.0.1:8000/consultas/legado
+# Content-Type: application/json
+#
+# {
+#   "paciente_nome": "Felipe Alves",
+#   "medico_nome": "Dr. Fernando",
+#   "data_hora": "2026-11-20T11:00:00",
+#   "especialidade": "Ortopedia",
+#   "status": "agendada"
+# }
 
-### POST com payload inválido (422 Unprocessable Entity - falta especialidade e status)
-POST http://127.0.0.1:8000/consultas/legado
-Content-Type: application/json
-
-{
-  "paciente_nome": "F",
-  "medico_nome": "Dr. Fernando",
-  "data_hora": "2026-11-20T11:00:00"
-}
+# ### POST com payload inválido (422 Unprocessable Entity) - DESATIVADO
+# POST http://127.0.0.1:8000/consultas/legado
+# Content-Type: application/json
+#
+# {
+#   "paciente_nome": "F",
+#   "medico_nome": "Dr. Fernando",
+#   "data_hora": "2026-11-20T11:00:00"
+# }
 
 ### GET página HTML da agenda (Testando renderização Jinja2)
 GET http://127.0.0.1:8000/consultas/agenda-html
@@ -178,3 +185,41 @@ Authorization: Bearer {{token_m2m_lab}}
   "especialidade": "Testes",
   "status": "agendada"
 }
+
+### ==========================================================
+### EXERCÍCIO 9 - TESTES DE SEGURANÇA E MITIGAÇÕES BOLA/BOPLA
+### ==========================================================
+
+### 1. DEFESA BOLA (GET): Médico B tenta acessar consulta do Médico A (Retorna 404 Not Found)
+GET http://127.0.0.1:8000/consultas/1
+Authorization: Bearer {{token_medico_b}}
+Accept: application/json
+
+### 2. DEFESA BOLA (DELETE): Médico B tenta deletar consulta do Médico A (Retorna 404 Not Found)
+DELETE http://127.0.0.1:8000/consultas/1
+Authorization: Bearer {{token_medico_b}}
+
+### 3. DEFESA BOPLA (Mass Assignment): Criar consulta enviando campos extras não documentados (Retorna 422 Unprocessable Content)
+POST http://127.0.0.1:8000/consultas/
+Content-Type: application/json
+Authorization: Bearer {{token_medico_a}}
+
+{
+  "paciente_nome": "Invasor Malicioso",
+  "medico_nome": "Dr. Hacker",
+  "data_hora": "2026-12-31T23:59:00",
+  "especialidade": "Exploitation",
+  "status": "agendada",
+  "is_admin": true,
+  "anotacoes_internas": "Tentativa de injeção em campo protegido"
+}
+
+### 4. DEFESA REGEX (Busca Maliciosa): Tentativa de injeção no parâmetro de busca (Retorna 400 Bad Request)
+GET http://127.0.0.1:8000/consultas/busca?termo=' OR '1'='1
+Accept: application/json
+Authorization: Bearer {{token_medico_a}}
+
+### 5. SUCESSO REGEX: Busca válida (Retorna 200 OK)
+GET http://127.0.0.1:8000/consultas/busca?termo=Carlos Silva
+Accept: application/json
+Authorization: Bearer {{token_medico_a}}
