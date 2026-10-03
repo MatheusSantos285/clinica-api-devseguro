@@ -83,3 +83,63 @@ def test_bloqueio_usuario_nao_admin_em_rota_restrita_admin():
     # 3. Validações
     assert response.status_code == 403
     assert response.json()["detail"] == "Acesso restrito a Administradores do sistema (BFLA Block)."
+
+
+def test_autenticacao_m2m_laboratorio_sucesso():
+    """Valida a emissão do token M2M Client Credentials e o sucesso no consumo da rota permitida."""
+    # 1. Autenticação Client Credentials
+    response_auth = client.post(
+        "/oauth/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": "lab_parceiro_01",
+            "client_secret": "LabSecret#2026"
+        }
+    )
+    assert response_auth.status_code == 200
+    token = response_auth.json()["access_token"]
+
+    # 2. Acesso Autorizado
+    response_vagas = client.get(
+        "/consultas/vagas-laboratorio",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response_vagas.status_code == 200
+    vagas = response_vagas.json()
+    assert isinstance(vagas, list)
+
+    # Egress Filtering (ausência de dados de pacientes)
+    if len(vagas) > 0:
+        assert "paciente_nome" not in vagas[0]
+        assert "anotacoes_internas" not in vagas[0]
+
+
+def test_bloqueio_escopo_m2m_tentando_acao_nao_autorizada():
+    """Valida o isolamento de escopos e menor privilégio bloqueando tentativas de escrita (403)."""
+    # 1. Emissão de Token com menor privilégio (appointments:read)
+    response_auth = client.post(
+        "/oauth/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": "lab_parceiro_01",
+            "client_secret": "LabSecret#2026"
+        }
+    )
+    token = response_auth.json()["access_token"]
+
+    # 2. Acesso Negado em rota de escrita (appointments:write)
+    response_post = client.post(
+        "/consultas/",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "paciente_nome": "Injeção M2M",
+            "medico_nome": "Dr. Hacker",
+            "data_hora": "2026-12-31T23:59:00",
+            "especialidade": "Exploitation",
+            "status": "agendada"
+        }
+    )
+
+    # 3. Asserções
+    assert response_post.status_code == 403
+    assert response_post.json()["detail"] == "Permissão insuficiente: escopos ausentes no token"

@@ -149,3 +149,32 @@ Authorization: Bearer {{token_medico_b}}
 ### 4. DEFESA BOLA (Exclusão): Médico B tenta deletar a consulta do Médico A (Retorna 404 Not Found)
 DELETE http://127.0.0.1:8000/consultas/4
 Authorization: Bearer {{token_medico_b}}
+
+### ==========================================================
+### EXERCÍCIO 7 - M2M, OAUTH2 CLIENT CREDENTIALS & SCOPES
+### ==========================================================
+
+### 1. SUCESSO: Obter Token M2M (Laboratório Parceiro)
+# @name loginM2MLab
+POST http://127.0.0.1:8000/oauth/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id=lab_parceiro_01&client_secret=LabSecret%232026
+> {% client.global.set("token_m2m_lab", response.body.access_token); %}
+
+### 2. SUCESSO: Consultar Vagas Disponíveis (Escopo autorizado)
+GET http://127.0.0.1:8000/consultas/vagas-laboratorio
+Authorization: Bearer {{token_m2m_lab}}
+
+### 3. DEFESA M2M: Tentar criar consulta sem appointments:write (Retorna 403 Forbidden)
+POST http://127.0.0.1:8000/consultas/
+Content-Type: application/json
+Authorization: Bearer {{token_m2m_lab}}
+
+{
+  "paciente_nome": "Invasor M2M",
+  "medico_nome": "Dr. Hacker",
+  "data_hora": "2026-12-31T23:59:00",
+  "especialidade": "Testes",
+  "status": "agendada"
+}
