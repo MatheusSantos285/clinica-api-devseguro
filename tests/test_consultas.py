@@ -62,3 +62,24 @@ def test_renderizacao_agenda_html_sucesso_e_seguranca():
 
     # Teardown: Limpeza do banco mockado
     del consultas_db[999]
+
+def test_bloqueio_usuario_nao_admin_em_rota_restrita_admin():
+    """Garante que um médico sem papel 'admin' seja bloqueado pela rota restrita BFLA."""
+
+    # 1. Simula login de um médico
+    login_response = client.post(
+        "/user/login",
+        data={"username": "medico_a@clinica.com", "password": "senha123"}
+    )
+    assert login_response.status_code == 200
+    token = login_response.json()["access_token"]
+
+    # 2. Tenta acessar rota restrita de admin com o token emitido
+    response = client.get(
+        "/admin/dashboard",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    # 3. Validações
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Acesso restrito a Administradores do sistema (BFLA Block)."

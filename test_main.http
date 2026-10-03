@@ -17,7 +17,7 @@ GET http://127.0.0.1:8000/consultas/999
 Accept: application/json
 
 ### POST criando nova consulta (Sucesso - 201 Created)
-POST http://127.0.0.1:8000/consultas/
+POST http://127.0.0.1:8000/consultas/legado
 Content-Type: application/json
 
 {
@@ -29,7 +29,7 @@ Content-Type: application/json
 }
 
 ### POST com payload inválido (422 Unprocessable Entity - falta especialidade e status)
-POST http://127.0.0.1:8000/consultas/
+POST http://127.0.0.1:8000/consultas/legado
 Content-Type: application/json
 
 {
@@ -45,3 +45,107 @@ Accept: text/html
 ### GET validar Egress Filtering em uma consulta JSON (Ausência de anotações internas)
 GET http://127.0.0.1:8000/consultas/1
 Accept: application/json
+
+### ==========================================================
+### EXERCÍCIO 6 - TESTES DE AUTENTICAÇÃO E JWT
+### ==========================================================
+
+### Login de Recepcionista (Captura Token JWT)
+# @name loginRecepcionista
+POST http://127.0.0.1:8000/user/login
+Content-Type: application/x-www-form-urlencoded
+
+username=recepcionista@clinica.com&password=senha123
+> {% client.global.set("token_recepcionista", response.body.access_token); %}
+
+### Login de Médico A (Captura Token JWT)
+# @name loginMedicoA
+POST http://127.0.0.1:8000/user/login
+Content-Type: application/x-www-form-urlencoded
+
+username=medico_a@clinica.com&password=senha123
+> {% client.global.set("token_medico_a", response.body.access_token); %}
+
+### Login de Médico B (Captura Token JWT)
+# @name loginMedicoB
+POST http://127.0.0.1:8000/user/login
+Content-Type: application/x-www-form-urlencoded
+
+username=medico_b@clinica.com&password=senha123
+> {% client.global.set("token_medico_b", response.body.access_token); %}
+
+
+### ==========================================================
+### EXERCÍCIO 6 - TESTES BFLA (ADMIN E MFA)
+### ==========================================================
+
+### 1. Login do Administrador (Verificar Desafio MFA - Não retorna JWT ainda)
+POST http://127.0.0.1:8000/user/login
+Content-Type: application/x-www-form-urlencoded
+
+username=admin@clinica.com&password=senha123
+
+### 2. Validar MFA do Administrador (Obter Token Admin Final)
+# @name loginAdminMFA
+POST http://127.0.0.1:8000/user/login/mfa-verify?username=admin@clinica.com&mfa_code=123456
+Accept: application/json
+
+> {% client.global.set("token_admin", response.body.access_token); %}
+
+### 3. SUCESSO: Acessar Rota Admin com Token Admin (MFA Verificado)
+GET http://127.0.0.1:8000/admin/dashboard
+Authorization: Bearer {{token_admin}}
+
+### 4. DEFESA BFLA: Acessar Rota Admin com Token de Médico (Retorna 403 Forbidden)
+GET http://127.0.0.1:8000/admin/dashboard
+Authorization: Bearer {{token_medico_a}}
+
+
+### ==========================================================
+### EXERCÍCIO 6 - TESTES BOLA/IDOR (OWNERSHIP DE CONSULTAS)
+### ==========================================================
+
+### 1. Médico A cria uma consulta
+# @name criaConsultaMedicoA
+POST http://127.0.0.1:8000/consultas/
+Content-Type: application/json
+Authorization: Bearer {{token_medico_a}}
+
+{
+  "paciente_nome": "João Silva",
+  "medico_nome": "Dr. Médico A",
+  "data_hora": "2026-12-01T10:00:00",
+  "especialidade": "Cardiologia",
+  "status": "agendada"
+}
+
+### 2. SUCESSO: Médico A edita a SUA própria consulta
+# Atenção: O ID alvo aqui é "4", assumindo que as rotas acima criaram a consulta com ID 4 no dict_mock.
+PUT http://127.0.0.1:8000/consultas/4
+Content-Type: application/json
+Authorization: Bearer {{token_medico_a}}
+
+{
+  "paciente_nome": "João Silva",
+  "medico_nome": "Dr. Médico A",
+  "data_hora": "2026-12-01T10:00:00",
+  "especialidade": "Cardiologia",
+  "status": "concluida"
+}
+
+### 3. DEFESA BOLA (Edição): Médico B tenta editar a consulta do Médico A (Retorna 404 Not Found)
+PUT http://127.0.0.1:8000/consultas/4
+Content-Type: application/json
+Authorization: Bearer {{token_medico_b}}
+
+{
+  "paciente_nome": "João Silva Hacked",
+  "medico_nome": "Dr. Médico B",
+  "data_hora": "2026-12-01T10:00:00",
+  "especialidade": "Cardiologia",
+  "status": "cancelada"
+}
+
+### 4. DEFESA BOLA (Exclusão): Médico B tenta deletar a consulta do Médico A (Retorna 404 Not Found)
+DELETE http://127.0.0.1:8000/consultas/4
+Authorization: Bearer {{token_medico_b}}

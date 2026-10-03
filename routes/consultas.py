@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, status, Path, Request
+from fastapi import APIRouter, HTTPException, status, Path, Request, Depends
 from fastapi.responses import HTMLResponse
 from typing import List
 from fastapi.templating import Jinja2Templates
 from models.consultas import ConsultaCreate, ConsultaResponse
 from database.consultas import consultas_db
+from auth.authenticate import get_current_user
 
 # Concentra os controladores e a definição dos endpoints RESTful
 router = APIRouter(prefix="/consultas", tags=["Consultas"])
@@ -29,7 +30,6 @@ async def renderizar_agenda(request: Request):
         context={"consultas": consultas_lista}
     )
 
-
 @router.get("/{id}", response_model=ConsultaResponse)
 async def obter_consulta(
         id: int = Path(..., gt=0, description="Identificador único da consulta")
@@ -46,8 +46,10 @@ async def obter_consulta(
         )
     return consulta
 
-
-@router.post("/", response_model=ConsultaResponse, status_code=status.HTTP_201_CREATED)
+# ==============================================================================
+# ROTA ANTIGA (Exercícios 1 a 5) - Mantida para testes e compatibilidade
+# ==============================================================================
+@router.post("/legado", response_model=ConsultaResponse, status_code=status.HTTP_201_CREATED)
 async def criar_consulta(consulta: ConsultaCreate):
     """Cadastra uma nova consulta."""
     novo_id = max(consultas_db.keys()) + 1 if consultas_db else 1
@@ -61,3 +63,57 @@ async def criar_consulta(consulta: ConsultaCreate):
 
     consultas_db[novo_id] = nova_consulta
     return nova_consulta
+
+# ==============================================================================
+# ROTA NOVA (Exercício 6) - Protegida com AuthN e AuthZ (BOLA Block)
+# ==============================================================================
+@router.post("/", response_model=ConsultaResponse, status_code=status.HTTP_201_CREATED)
+async def criar_consulta(consulta: ConsultaCreate, current_user: dict = Depends(get_current_user)):
+    novo_id = max(consultas_db.keys()) + 1 if consultas_db else 1
+    nova_consulta = consulta.model_dump()
+    nova_consulta["id"] = novo_id
+    nova_consulta["anotacoes_internas"] = "Agendamento via API web."
+
+    # Vincula o ID do médico (visto pelo JWT) à consulta
+    nova_consulta["medico_id"] = current_user.get("sub")
+    consultas_db[novo_id] = nova_consulta
+    return nova_consulta
+
+@router.put("/{id}", response_model=ConsultaResponse)
+async def editar_consulta(
+        consulta_in: ConsultaCreate,
+        id: int = Path(..., gt=0),
+        current_user: dict = Depends(get_current_user)
+):
+    consulta = consultas_db.get(id)
+    if not consulta:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta não encontrada.")
+
+    # Validação de Ownership (BOLA/IDOR Block)
+    # Retornamos 404 para não vazar a existência ou não do recurso incorretamente.
+    if current_user["role"] == "medico" and consulta.get("medico_id") != current_user["sub"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta não encontrada.")
+
+    atualizada = consulta_in.model_dump()
+    atualizada["id"] = id
+    atualizada["anotacoes_internas"] = consulta["anotacoes_internas"]
+    atualizada["medico_id"] = consulta["medico_id"]
+    consultas_db[id] = atualizada
+    return atualizada
+
+
+@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+async def excluir_consulta(
+        id: int = Path(..., gt=0),
+        current_user: dict = Depends(get_current_user)
+):
+    consulta = consultas_db.get(id)
+    if not consulta:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta não encontrada.")
+
+    # Validação de Ownership (BOLA/IDOR Block)
+    if current_user["role"] == "medico" and consulta.get("medico_id") != current_user["sub"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta não encontrada.")
+
+    del consultas_db[id]
+    return None
