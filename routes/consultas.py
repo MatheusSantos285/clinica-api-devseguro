@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, status, Path, Request, Depends, Se
 from fastapi.responses import HTMLResponse
 from typing import List
 from fastapi.templating import Jinja2Templates
+from config.rate_limiter import limiter
 from models.consultas import ConsultaCreate, ConsultaResponse
 from database.consultas import consultas_db
 from auth.authenticate import get_current_user, get_current_user_with_scopes
@@ -35,7 +36,8 @@ def get_owned_consulta(id: int = Path(...), current_user: dict = Depends(get_cur
 #    return list(consultas_db.values())
 
 @router.get("/", response_model=List[ConsultaResponse])
-async def listar_consultas(current_user: dict = Depends(get_current_user)):
+@limiter.limit("60/minute")
+async def listar_consultas(request: Request, current_user: dict = Depends(get_current_user)):
     """Retorna a lista de consultas filtrada com base no papel e propriedade do usuário."""
 
     # Se o usuário for um administrador, ele tem privilégios para ver a agenda global

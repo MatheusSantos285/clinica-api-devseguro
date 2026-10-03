@@ -223,3 +223,39 @@ Authorization: Bearer {{token_medico_a}}
 GET http://127.0.0.1:8000/consultas/busca?termo=Carlos Silva
 Accept: application/json
 Authorization: Bearer {{token_medico_a}}
+
+### ==========================================================
+### EXERCÍCIO 10 - TESTES DE HARDENING, CORS E RATE LIMITING
+### ==========================================================
+
+### Teste 1: CORS Origem Autorizada
+# O Header 'Access-Control-Allow-Origin' estará presente na resposta HTTP 200 OK
+GET http://127.0.0.1:8000/
+Origin: http://localhost:3000
+Accept: application/json
+
+### Teste 2: CORS Origem NÃO Autorizada (Bloqueio)
+# O Header 'Access-Control-Allow-Origin' NÃO será devolvido, ativando o bloqueio do navegador
+GET http://127.0.0.1:8000/
+Origin: http://site-malicioso-hacker.com
+Accept: application/json
+
+### Teste 3: Validação de Security Headers na resposta
+# Inspecione a aba 'Headers' para validar: HSTS, X-Frame-Options e X-Content-Type-Options
+GET http://127.0.0.1:8000/
+Accept: application/json
+
+### Teste 4: Sequência de 5 POSTs no /user/login (Prevenção de Brute Force)
+# Execute este request múltiplas vezes em sucessão rápida (6 vezes)
+# A partir da 6ª tentativa, a API retornará 429 Too Many Requests.
+POST http://127.0.0.1:8000/user/login
+Content-Type: application/x-www-form-urlencoded
+
+username=medico_a@clinica.com&password=senha123
+
+### Teste 5: Requisição em GET /consultas/ logo em seguida (Catálogo Operacional)
+# Mesmo com o bloqueio (429) no endpoint de Login, o catálogo segue com limite permissivo de 60/min.
+# Retornará 200 OK validando a separação e granularidade de Rate Limits por endpoint.
+GET http://127.0.0.1:8000/consultas/
+Authorization: Bearer {{token_medico_a}}
+Accept: application/json

@@ -1,15 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Form, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from auth.hash_password import HashPassword
 from auth.jwt_handler import create_access_token
+from config.rate_limiter import limiter
 from database.users import users_db
 
 # Router sem prefixo para permitir rotas padronizadas /oauth/token e /user/*
 router = APIRouter(tags=["Auth & Users"])
 
-
 @router.post("/user/login")
-async def sign_user_in(user: OAuth2PasswordRequestForm = Depends()) -> dict:
+@limiter.limit("5/minute")
+async def sign_user_in(request: Request, user: OAuth2PasswordRequestForm = Depends()) -> dict:
     user_exist = users_db.get(user.username)
     if not user_exist or user_exist.get("type") == "m2m":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")

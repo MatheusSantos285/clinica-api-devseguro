@@ -1,9 +1,18 @@
+import pytest
 from fastapi.testclient import TestClient
-
+from config.rate_limiter import limiter
 from database.consultas import consultas_db
 from main import app
 
 client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def reset_rate_limits():
+    """
+    Limpa o histórico de requisições na memória do SlowAPI antes de cada teste.
+    Isso garante que um teste não consuma a cota de Rate Limiting do outro.
+    """
+    limiter._storage.reset()
 
 def test_listar_consultas_sucesso():
     login_response = client.post(
@@ -307,3 +316,42 @@ def test_defesa_bola_delecao_nao_autorizada():
     )
     assert response.status_code == 404
     assert response.json()["detail"] == "Consulta não encontrada."
+
+def test_validar_cors_origem_autorizada():
+    """Valida a presença do Header CORS ao enviar uma requisição de Origem permitida."""
+    response = client.get("/", headers={"Origin": "http://localhost:3000"})
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+def test_validar_presenca_security_headers():
+    """Valida que o middleware global injeta corretamente os headers de segurança HSTS e Anti-Clickjacking."""
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.headers.get("Strict-Transport-Security") == "max-age=31536000; includeSubDomains"
+    assert response.headers.get("X-Frame-Options") == "DENY"
+    assert response.headers.get("X-Content-Type-Options") == "nosniff"
+
+def test_rate_limiting_estouro_login():
+    """
+    Testa o limite estrito de 5 requests/minuto no endpoint de Login.
+    Enviamos um IP 'falso' para não afetar o rate limit de outros testes no TestClient.
+    """
+    ip_alvo = "203.0.113.10"
+
+    # Consumir a cota das 5 requisições iniciais
+    for _ in range(5):
+        res = client.post(
+            "/user/login",
+            data={"username": "medico_a@clinica.com", "password": "senha123"},
+            headers={"X-Forwarded-For": ip_alvo}
+        )
+        assert res.status_code == 200
+
+    # 6ª Requisição: Acesso Negado pelo Rate Limiter
+    res_bloqueada = client.post(
+        "/user/login",
+        data={"username": "medico_a@clinica.com", "password": "senha123"},
+        headers={"X-Forwarded-For": ip_alvo}
+    )
+    assert res_bloqueada.status_code == 429
+    assert "Rate limit exceeded" in res_bloqueada.json()["error"]
