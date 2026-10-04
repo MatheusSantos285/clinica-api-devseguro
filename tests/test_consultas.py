@@ -61,6 +61,119 @@ def get_auth_token(username="medico_a@clinica.com", password="senha123"):
     return response.json()["access_token"]
 
 
+# ========================================================================
+# SUÍTE EXPANDIDA DE TESTES DEVSECOPS - OWASP TOP 10
+# ========================================================================
+
+def test_bloqueio_bfla_usuario_comum_em_admin_dashboard():
+    """BFLA (Escalonamento Vertical): Bloqueia tentativa de acesso admin por conta de médico."""
+    token = get_auth_token(username="medico_a@clinica.com")
+    response = client.get("/admin/dashboard", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
+    assert "Acesso restrito a Administradores" in response.json()["detail"]
+
+
+def test_bloqueio_bola_leitura_consulta_terceiros():
+    """BOLA (Escalonamento Horizontal - Leitura): Médico B tenta ler consulta do Médico A."""
+    token = get_auth_token(username="medico_b@clinica.com")
+    response = client.get("/consultas/1", headers={"Authorization": f"Bearer {token}"})
+    # O status deve ser defensivo 404 para mitigar Enumeração de Diretórios
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Consulta não encontrada."
+
+
+def test_bloqueio_bola_edicao_consulta_terceiros():
+    """BOLA (Escalonamento Horizontal - Edição): Médico B tenta editar (PUT) consulta do Médico A."""
+    token = get_auth_token(username="medico_b@clinica.com")
+    response = client.put(
+        "/consultas/1",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "paciente_nome": "Invasor Malicioso", "medico_nome": "Dr. Médico B",
+            "data_hora": "2026-12-01T10:00:00", "especialidade": "Geral", "status": "cancelada"
+        }
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Consulta não encontrada."
+
+
+def test_bloqueio_bola_delecao_consulta_terceiros():
+    """BOLA (Escalonamento Horizontal - Deleção): Médico B tenta excluir (DELETE) consulta do Médico A."""
+    token = get_auth_token(username="medico_b@clinica.com")
+    response = client.delete("/consultas/1", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Consulta não encontrada."
+
+
+def test_bloqueio_m2m_tentando_escrita_sem_escopo():
+    """M2M e Client Credentials: O laboratório parceiro só possui scope 'appointments:read'."""
+    response_auth = client.post(
+        "/oauth/token",
+        data={"grant_type": "client_credentials", "client_id": "lab_parceiro_01", "client_secret": "LabSecret#2026"}
+    )
+    token = response_auth.json()["access_token"]
+
+    # O cliente tenta forçar escrita via POST
+    response_post = client.post(
+        "/consultas/",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "paciente_nome": "Injeção M2M", "medico_nome": "Dr. Hacker",
+            "data_hora": "2026-12-31T23:59:00", "especialidade": "Exploitation", "status": "agendada"
+        }
+    )
+    assert response_post.status_code == 403
+    assert "Permissão insuficiente" in response_post.json()["detail"]
+
+
+def test_bloqueio_bopla_campos_extras_pydantic():
+    """BOPLA (Mass Assignment): Tenta enviar objeto JSON poluído com atributos não listados no Pydantic."""
+    token = get_auth_token()
+    response = client.post(
+        "/consultas/",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "paciente_nome": "Paciente Valido", "medico_nome": "Dr. Médico A",
+            "data_hora": "2026-12-01T10:00:00", "especialidade": "Geral",
+            "status": "agendada", "is_admin": True, "anotacoes_internas": "Tentando forçar input"
+        }
+    )
+    # A config ConfigDict(extra='forbid') no Pydantic trava a chamada no Ingress
+    assert response.status_code == 422
+
+
+def test_bloqueio_sqli_regex_termo_busca():
+    """Injeção: Avalia bloqueio contra ataques clássicos de SQLi (' OR '1'='1) pelo Regex no Query param."""
+    token = get_auth_token()
+    response = client.get("/consultas/busca?termo=' OR '1'='1", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 400
+    assert "Termo de busca inválido" in response.json()["detail"]
+
+
+def test_estouro_rate_limit_login():
+    """Rate Limiting: Simula Força Bruta contra o Auth estourando as 5 requisições/minuto."""
+    ip_alvo = "203.0.113.10"
+    for _ in range(5):
+        res = client.post(
+            "/user/login",
+            data={"username": "medico_a@clinica.com", "password": "senha123"},
+            headers={"X-Forwarded-For": ip_alvo}
+        )
+        assert res.status_code == 200
+
+    res_bloqueada = client.post(
+        "/user/login",
+        data={"username": "medico_a@clinica.com", "password": "senha123"},
+        headers={"X-Forwarded-For": ip_alvo}
+    )
+    assert res_bloqueada.status_code == 429
+    assert "Rate limit exceeded" in res_bloqueada.json()["error"]
+
+
+# ========================================================================
+# TESTES COMPLEMENTARES DE ACESSO, COMPORTAMENTO E HARDENING
+# ========================================================================
+
 def test_listar_consultas_sucesso():
     token = get_auth_token()
     response = client.get("/consultas/", headers={"Authorization": f"Bearer {token}"})

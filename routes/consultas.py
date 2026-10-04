@@ -4,7 +4,6 @@ from fastapi.responses import HTMLResponse
 from typing import List
 from fastapi.templating import Jinja2Templates
 from config.rate_limiter import limiter
-from database.consultas import consultas_db
 from sqlmodel import Session, select
 from database.connection import get_session
 from models.consultas import ConsultaCreate, ConsultaResponse, Consulta

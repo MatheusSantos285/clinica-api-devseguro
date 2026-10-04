@@ -1,0 +1,74 @@
+# .github/workflows/security.yml
+name: Pipeline DevSecOps - Clinica API
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # 1. Bateria de Testes Unitários e Funcionais de Segurança
+  unit_and_security_tests:
+    name: Pytest - Security & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Pytest
+        env:
+          DATABASE_URL: "sqlite:///:memory:"
+          SECRET_KEY: "CHAVE_SECRETA_PIPELINE"
+        run: |
+          pytest tests/test_consultas.py -v
+
+  # 2. Security Gate SAST: Escaneamento estático do código da aplicação
+  sast_code_scan:
+    name: SAST - Bandit Code Scan
+    runs-on: ubuntu-latest
+    needs: unit_and_security_tests
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Bandit
+        run: pip install bandit
+
+      - name: Run Bandit (Break on HIGH)
+        # O Bandit escaneia de forma recursiva (-r). A flag -lll quebra a build 
+        # automaticamente em caso de severidade Alta.
+        run: bandit -r . -lll
+
+  # 3. Security Gate SCA: Escaneamento de vulnerabilidades em dependências
+  sca_dependency_scan:
+    name: SCA - Trivy Dependency Scan
+    runs-on: ubuntu-latest
+    needs: unit_and_security_tests
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          ignore-unfixed: true
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1' # Quebra a esteira impedindo deploy vulnerável
