@@ -4,8 +4,10 @@ from fastapi.responses import HTMLResponse
 from typing import List
 from fastapi.templating import Jinja2Templates
 from config.rate_limiter import limiter
-from models.consultas import ConsultaCreate, ConsultaResponse
 from database.consultas import consultas_db
+from sqlmodel import Session, select
+from database.connection import get_session
+from models.consultas import ConsultaCreate, ConsultaResponse, Consulta
 from auth.authenticate import get_current_user, get_current_user_with_scopes
 
 # Concentra os controladores e a definição dos endpoints RESTful
@@ -14,17 +16,17 @@ router = APIRouter(prefix="/consultas", tags=["Consultas"])
 templates = Jinja2Templates(directory="templates")
 
 # EXERCÍCIO 9 - DEPENDÊNCIA CENTRALIZADA CONTRA BOLA (IDOR)
-def get_owned_consulta(id: int = Path(...), current_user: dict = Depends(get_current_user)) -> dict:
+def get_owned_consulta(id: int = Path(...), current_user: dict = Depends(get_current_user), session: Session = Depends(get_session)) -> Consulta:
     """
     Busca a consulta e verifica a propriedade (Ownership).
     Mitiga a enumeração de IDs devolvendo 404 em vez de 403.
     """
-    consulta = consultas_db.get(id)
+    consulta = session.exec(select(Consulta).where(Consulta.id == id)).first()
     if not consulta:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta não encontrada.")
 
     # Validação de ownership: Se for médico, só acessa os seus próprios pacientes.
-    if current_user.get("role") == "medico" and consulta.get("medico_id") != current_user.get("sub"):
+    if current_user.get("role") == "medico" and consulta.medico_id != current_user.get("sub"):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta não encontrada.")
 
     return consulta
@@ -37,20 +39,15 @@ def get_owned_consulta(id: int = Path(...), current_user: dict = Depends(get_cur
 
 @router.get("/", response_model=List[ConsultaResponse])
 @limiter.limit("60/minute")
-async def listar_consultas(request: Request, current_user: dict = Depends(get_current_user)):
+async def listar_consultas(request: Request, current_user: dict = Depends(get_current_user), session: Session = Depends(get_session)):
     """Retorna a lista de consultas filtrada com base no papel e propriedade do usuário."""
 
     # Se o usuário for um administrador, ele tem privilégios para ver a agenda global
     if current_user.get("role") == "admin":
-        return list(consultas_db.values())
-
+        return session.exec(select(Consulta)).all()
     # Se for um médico, filtramos a lista devolvendo APENAS as consultas dele
     elif current_user.get("role") == "medico":
-        consultas_do_medico = [
-            c for c in consultas_db.values()
-            if c.get("medico_id") == current_user.get("sub")
-        ]
-        return consultas_do_medico
+        return session.exec(select(Consulta).where(Consulta.medico_id == current_user.get("sub"))).all()
 
     # Recepcionistas ou outros papéis podem ter lógicas específicas ou serem bloqueados
     raise HTTPException(
@@ -75,7 +72,8 @@ async def listar_consultas(request: Request, current_user: dict = Depends(get_cu
 @router.get("/agenda-html", response_class=HTMLResponse)
 async def renderizar_agenda(
     request: Request,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session)
 ):
     """
     Rota HTML: Renderiza a lista de consultas aplicando Autorização.
@@ -84,15 +82,10 @@ async def renderizar_agenda(
     """
     # 1. Se for admin ou recepcionista, carrega a agenda global
     if current_user.get("role") in ["admin", "recepcionista"]:
-        consultas_lista = list(consultas_db.values())
-
+        consultas_lista = session.exec(select(Consulta)).all()
     # 2. Se for médico, filtra (BOLA/Ownership) para mostrar apenas os seus pacientes
     elif current_user.get("role") == "medico":
-        consultas_lista = [
-            c for c in consultas_db.values()
-            if c.get("medico_id") == current_user.get("sub")
-        ]
-
+        consultas_lista = session.exec(select(Consulta).where(Consulta.medico_id == current_user.get("sub"))).all()
     # 3. Bloqueia qualquer outro papel não mapeado
     else:
         raise HTTPException(status_code=403, detail="Acesso negado à agenda web.")
@@ -106,26 +99,28 @@ async def renderizar_agenda(
 # EXERCÍCIO 7: Endpoint Dedicado de Horários (M2M) - Acesso mínimo
 @router.get("/vagas-laboratorio")
 async def listar_vagas_laboratorio(
-    current_user: dict = Security(get_current_user_with_scopes, scopes=["appointments:read"])
+    current_user: dict = Security(get_current_user_with_scopes, scopes=["appointments:read"]),
+    session: Session = Depends(get_session)
 ):
     """Retorna horários disponíveis omitindo dados sensíveis (PHI) via Egress Filtering estrito."""
-    vagas = []
-    for consulta in consultas_db.values():
-        if consulta.get("status") in ["agendada", "disponivel"]:
-            vagas.append({
-                "id": consulta["id"],
-                "data_hora": consulta["data_hora"],
-                "especialidade": consulta["especialidade"],
-                "medico_nome": consulta["medico_nome"]
-            })
-    return vagas
+    consultas = session.exec(select(Consulta).where(Consulta.status.in_(["agendada", "disponivel"]))).all()
+    return [
+        {
+            "id": c.id,
+            "data_hora": c.data_hora,
+            "especialidade": c.especialidade,
+            "medico_nome": c.medico_nome
+        }
+        for c in consultas
+    ]
 
 
 # EXERCÍCIO 9: VALIDAÇÃO WHITELIST E REGEX CONTRA SQL INJECTION / INPUT MALICIOSO
 @router.get("/busca", response_model=List[ConsultaResponse])
 async def buscar_consultas(
-        termo: str = Query(...),
-        current_user: dict = Depends(get_current_user)  # <- Injeção de Segurança adicionada
+    termo: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session)
 ):
     """Rota de busca com validação ativa para evitar injeções, filtrada pelo escopo do usuário."""
     # Whitelist via Regex: Apenas letras, números e espaços são permitidos.
@@ -135,25 +130,18 @@ async def buscar_consultas(
             detail="Termo de busca inválido. Apenas caracteres alfanuméricos e espaços são permitidos."
         )
 
-    # Lógica base de busca
-    resultados = [
-        c for c in consultas_db.values()
-        if termo.lower() in c.get("paciente_nome", "").lower()
-    ]
+    statement = select(Consulta).where(Consulta.paciente_nome.contains(termo))
 
     # Aplicação do filtro de Ownership (BOLA)
     if current_user.get("role") == "medico":
-        resultados = [
-            c for c in resultados
-            if c.get("medico_id") == current_user.get("sub")
-        ]
+        statement = statement.where(Consulta.medico_id == current_user.get("sub"))
     elif current_user.get("role") not in ["admin", "recepcionista"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Acesso negado à busca de consultas."
         )
 
-    return resultados
+    return session.exec(statement).all()
 
 # CÓDIGO ANTERIOR (EVIDÊNCIA EXERCÍCIO 8)
 #@router.get("/{id}", response_model=ConsultaResponse)
@@ -192,14 +180,16 @@ async def obter_consulta(consulta: dict = Depends(get_owned_consulta)):
 @router.post("/", response_model=ConsultaResponse, status_code=status.HTTP_201_CREATED)
 async def criar_consulta(
     consulta: ConsultaCreate,
-    current_user: dict = Security(get_current_user_with_scopes, scopes=["appointments:write"])
+    current_user: dict = Security(get_current_user_with_scopes, scopes=["appointments:write"]),
+    session: Session = Depends(get_session)
 ):
-    novo_id = max(consultas_db.keys()) + 1 if consultas_db else 1
-    nova_consulta = consulta.model_dump()
-    nova_consulta["id"] = novo_id
-    nova_consulta["anotacoes_internas"] = "Agendamento via API web."
-    nova_consulta["medico_id"] = current_user.get("sub")
-    consultas_db[novo_id] = nova_consulta
+    nova_consulta = Consulta(**consulta.model_dump())
+    nova_consulta.anotacoes_internas = "Agendamento via API web."
+    nova_consulta.medico_id = current_user.get("sub")
+
+    session.add(nova_consulta)
+    session.commit()
+    session.refresh(nova_consulta)
     return nova_consulta
 
 
@@ -224,17 +214,22 @@ async def criar_consulta(
 
 @router.put("/{id}", response_model=ConsultaResponse)
 async def editar_consulta(
-       consulta_in: ConsultaCreate,
-       id: int = Path(..., gt=0),
-       consulta: dict = Depends(get_owned_consulta),  # Injeção para BOLA
-       current_user: dict = Security(get_current_user_with_scopes, scopes=["appointments:write"])
+        consulta_in: ConsultaCreate,
+        id: int = Path(..., gt=0),
+        consulta_bd: Consulta = Depends(get_owned_consulta),
+        current_user: dict = Security(get_current_user_with_scopes, scopes=["appointments:write"]),
+        session: Session = Depends(get_session)
 ):
-   atualizada = consulta_in.model_dump()
-   atualizada["id"] = id
-   atualizada["anotacoes_internas"] = consulta["anotacoes_internas"]
-   atualizada["medico_id"] = consulta["medico_id"]
-   consultas_db[id] = atualizada
-   return atualizada
+    consulta_bd.paciente_nome = consulta_in.paciente_nome
+    consulta_bd.medico_nome = consulta_in.medico_nome
+    consulta_bd.data_hora = consulta_in.data_hora
+    consulta_bd.especialidade = consulta_in.especialidade
+    consulta_bd.status = consulta_in.status
+
+    session.add(consulta_bd)
+    session.commit()
+    session.refresh(consulta_bd)
+    return consulta_bd
 
 
 # CÓDIGO ANTERIOR (EVIDÊNCIA EXERCÍCIO 8)
@@ -251,12 +246,13 @@ async def editar_consulta(
 #    del consultas_db[id]
 #    return None
 
-# EXERCÍCIO 9: RESOLUÇÃO DA VULNERABILIDADE IDENTIFICADA NA ROTA DELETE
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def excluir_consulta(
-       id: int = Path(..., gt=0),
-       consulta: dict = Depends(get_owned_consulta),  # Injeção para BOLA
-       current_user: dict = Security(get_current_user_with_scopes, scopes=["appointments:write"])
+    id: int = Path(..., gt=0),
+    consulta_bd: Consulta = Depends(get_owned_consulta),
+    current_user: dict = Security(get_current_user_with_scopes, scopes=["appointments:write"]),
+    session: Session = Depends(get_session)
 ):
-   del consultas_db[id]
-   return None
+    session.delete(consulta_bd)
+    session.commit()
+    return None
